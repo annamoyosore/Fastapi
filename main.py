@@ -1,172 +1,134 @@
-from fastapi import FastAPI, Depends, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from datetime import datetime, timedelta
-import uuid, jwt
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web3 Wallet Dashboard</title>
 
-from appwrite_client import users, db, DATABASE_ID, ADMIN_USER_ID
+<script src="https://unpkg.com/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+<script src="https://unpkg.com/@walletconnect/ethereum-provider@2.11.0/dist/index.umd.min.js"></script>
 
-SECRET_KEY = "CHANGE_THIS_SECRET"
-ALGORITHM = "HS256"
+<style>
+body{
+  margin:0;
+  font-family:Arial;
+  background:linear-gradient(-45deg,#0f2027,#203a43,#2c5364,#000);
+  background-size:400% 400%;
+  animation:gradient 12s ease infinite;
+  color:white;
+  text-align:center;
+  padding-top:80px;
+}
+@keyframes gradient{
+  0%{background-position:0% 50%}
+  50%{background-position:100% 50%}
+  100%{background-position:0% 50%}
+}
+.container{
+  background:rgba(0,0,0,0.65);
+  padding:30px;
+  border-radius:20px;
+  width:360px;
+  margin:auto;
+  box-shadow:0 0 25px rgba(0,255,255,0.4);
+}
+button{
+  padding:14px 28px;
+  border:none;
+  border-radius:30px;
+  font-size:15px;
+  cursor:pointer;
+  background:linear-gradient(90deg,#00f2fe,#4facfe);
+  color:white;
+  font-weight:bold;
+  margin:8px;
+  transition:.3s;
+}
+button:hover{
+  transform:scale(1.05);
+  box-shadow:0 0 15px #00f2fe;
+}
+.balance{
+  margin-top:15px;
+  font-size:16px;
+  word-break:break-all;
+}
+</style>
+</head>
 
-app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+<body>
 
-# ---------------- JWT ----------------
-def create_token(user_id: str):
-    payload = {
-        "sub": user_id,
-        "exp": datetime.utcnow() + timedelta(days=1)
+<div class="container">
+  <h2>Web3 Wallet Dashboard</h2>
+  <button onclick="connectWallet()">Connect Wallet</button>
+
+  <div class="balance" id="address">Address: -</div>
+  <div class="balance" id="eth">ETH: -</div>
+  <div class="balance" id="bnb">BNB: -</div>
+</div>
+
+<script>
+let userAddress;
+const projectId = "ff0cecca30909c612e7cfc06e8b4c664";
+
+async function connectWallet(){
+  try{
+
+    // Force WalletConnect only (no injected detection)
+    const EthereumProvider = window.WalletConnectEthereumProvider || window.EthereumProvider;
+
+    if(!EthereumProvider){
+      alert("WalletConnect library failed to load. Try different hosting (Netlify recommended).");
+      return;
     }
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
-def get_current_user(token: str = Depends(lambda: None)):
-    if not token:
-        raise HTTPException(401, "Missing token")
-    try:
-        payload = jwt.decode(token.replace("Bearer ", ""), SECRET_KEY, algorithms=[ALGORITHM])
-        return payload["sub"]
-    except:
-        raise HTTPException(401, "Invalid token")
+    const provider = await EthereumProvider.init({
+      projectId: projectId,
+      chains: [1,56],
+      showQrModal: true,
+      rpcMap:{
+        1:"https://rpc.walletconnect.org/v1?chainId=eip155:1&projectId="+projectId,
+        56:"https://rpc.walletconnect.org/v1?chainId=eip155:56&projectId="+projectId
+      }
+    });
 
-# ---------------- SCHEMAS ----------------
-class Register(BaseModel):
-    email: str
-    password: str
-    referrerId: str | None = None
+    await provider.enable();
 
-class Login(BaseModel):
-    email: str
-    password: str
+    const ethersProvider = new ethers.providers.Web3Provider(provider);
+    const signer = ethersProvider.getSigner();
+    userAddress = await signer.getAddress();
 
-class Invest(BaseModel):
-    plan: str
-    amount: float
+    document.getElementById("address").innerText = "Address: " + userAddress;
 
-class AmountOnly(BaseModel):
-    amount: float
+    loadBalances();
 
-class BankDetails(BaseModel):
-    bankName: str
-    accountName: str
-    accountNumber: str
+  }catch(err){
+    alert("Connection failed: " + err.message);
+    console.error(err);
+  }
+}
 
-# ---------------- AUTH ----------------
-@app.post("/register")
-def register(data: Register):
-    user = users.create(str(uuid.uuid4()), data.email, data.password)
+async function loadBalances(){
 
-    db.create_document(DATABASE_ID, "wallets", str(uuid.uuid4()), {
-        "userId": user["$id"],
-        "balance": 0,
-        "createdAt": datetime.utcnow().isoformat()
-    })
+  const ethProvider = new ethers.providers.JsonRpcProvider(
+    "https://rpc.walletconnect.org/v1?chainId=eip155:1&projectId="+projectId
+  );
+  const ethBalance = await ethProvider.getBalance(userAddress);
+  document.getElementById("eth").innerText =
+    "ETH: " + parseFloat(
+      ethers.utils.formatEther(ethBalance)
+    ).toFixed(4);
 
-    if data.referrerId:
-        db.create_document(DATABASE_ID, "referrals", str(uuid.uuid4()), {
-            "referrerId": data.referrerId,
-            "referredId": user["$id"],
-            "bonus": 1000,
-            "status": "pending",
-            "createdAt": datetime.utcnow().isoformat()
-        })
+  const bnbProvider = new ethers.providers.JsonRpcProvider(
+    "https://rpc.walletconnect.org/v1?chainId=eip155:56&projectId="+projectId
+  );
+  const bnbBalance = await bnbProvider.getBalance(userAddress);
+  document.getElementById("bnb").innerText =
+    "BNB: " + parseFloat(
+      ethers.utils.formatEther(bnbBalance)
+    ).toFixed(4);
+}
+</script>
 
-    return {"message": "Registered"}
-
-@app.post("/login")
-def login(data: Login):
-    session = users.create_email_password_session(data.email, data.password)
-    token = create_token(session["userId"])
-    return {"access_token": token, "user_id": session["userId"]}
-
-# ---------------- WALLET ----------------
-@app.get("/wallet")
-def wallet(user_id=Depends(get_current_user)):
-    w = db.list_documents(DATABASE_ID, "wallets", [f"userId={user_id}"])["documents"][0]
-    return {"balance": w["balance"]}
-
-# ---------------- INVESTMENTS ----------------
-@app.post("/invest")
-def invest(data: Invest, user_id=Depends(get_current_user)):
-    wallet = db.list_documents(DATABASE_ID, "wallets", [f"userId={user_id}"])["documents"][0]
-    if wallet["balance"] < data.amount:
-        raise HTTPException(400, "Insufficient balance")
-
-    db.update_document(DATABASE_ID, "wallets", wallet["$id"], {
-        "balance": wallet["balance"] - data.amount
-    })
-
-    return db.create_document(DATABASE_ID, "investments", str(uuid.uuid4()), {
-        "userId": user_id,
-        "plan": data.plan,
-        "amount": data.amount,
-        "status": "active",
-        "createdAt": datetime.utcnow().isoformat()
-    })
-
-@app.get("/investments")
-def investments(user_id=Depends(get_current_user)):
-    return db.list_documents(DATABASE_ID, "investments", [f"userId={user_id}"])["documents"]
-
-# ---------------- BANK ----------------
-@app.post("/bank-details")
-def bank(data: BankDetails, user_id=Depends(get_current_user)):
-    existing = db.list_documents(DATABASE_ID, "bank_details", [f"userId={user_id}"])
-    payload = {**data.dict(), "userId": user_id}
-
-    if existing["total"]:
-        db.update_document(DATABASE_ID, "bank_details", existing["documents"][0]["$id"], payload)
-    else:
-        db.create_document(DATABASE_ID, "bank_details", str(uuid.uuid4()), payload)
-
-    return {"message": "Bank saved"}
-
-# ---------------- REQUESTS ----------------
-@app.post("/request-funds")
-def fund(data: AmountOnly, user_id=Depends(get_current_user)):
-    return db.create_document(DATABASE_ID, "fund_requests", str(uuid.uuid4()), {
-        "userId": user_id,
-        "amount": data.amount,
-        "status": "pending"
-    })
-
-@app.post("/request-withdrawal")
-def withdraw(data: AmountOnly, user_id=Depends(get_current_user)):
-    return db.create_document(DATABASE_ID, "withdrawal_requests", str(uuid.uuid4()), {
-        "userId": user_id,
-        "amount": data.amount,
-        "status": "pending"
-    })
-
-# ---------------- ADMIN ----------------
-def verify_admin(user_id: str):
-    if user_id != ADMIN_USER_ID:
-        raise HTTPException(403, "Admin only")
-
-@app.get("/admin/referrals")
-def admin_refs(user_id=Depends(get_current_user)):
-    verify_admin(user_id)
-    return db.list_documents(DATABASE_ID, "referrals", ["status=pending"])["documents"]
-
-@app.post("/admin/approve-referral/{rid}")
-def approve_ref(rid: str, user_id=Depends(get_current_user)):
-    verify_admin(user_id)
-    r = db.get_document(DATABASE_ID, "referrals", rid)
-
-    w = db.list_documents(DATABASE_ID, "wallets", [f"userId={r['referrerId']}"])["documents"][0]
-    db.update_document(DATABASE_ID, "wallets", w["$id"], {
-        "balance": w["balance"] + r["bonus"]
-    })
-
-    db.update_document(DATABASE_ID, "referrals", rid, {
-        "status": "approved",
-        "approvedAt": datetime.utcnow().isoformat()
-    })
-
-    return {"message": "Approved"}
+</body>
+</html>
